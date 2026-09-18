@@ -1603,6 +1603,35 @@ fn test_skip_input_fifo() {
         .stderr_only("0+0 records in\n0+0 records out\n");
 }
 
+/// Test that a non-seekable output that is not a FIFO is written, not rejected.
+///
+/// `/dev/ptmx` is a character device whose `lseek()` fails with ESPIPE, so it
+/// takes the regular-file output path rather than the FIFO one.
+#[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn test_seek_zero_nonseekable_output() {
+    // Not every environment exposes a usable /dev/ptmx.
+    if OpenOptions::new().write(true).open("/dev/ptmx").is_err() {
+        println!("TEST SKIPPED: /dev/ptmx is not writable");
+        return;
+    }
+
+    for extra in [
+        vec![],
+        vec!["seek=0"],
+        vec!["seek=0", "conv=notrunc"],
+        vec!["oseek=0"],
+    ] {
+        let mut args = vec!["bs=4", "count=1", "of=/dev/ptmx", "status=noxfer"];
+        args.extend(extra.iter().copied());
+        new_ucmd!()
+            .args(&args)
+            .pipe_in("data")
+            .succeeds()
+            .stderr_only("1+0 records in\n1+0 records out\n");
+    }
+}
+
 /// Test for reading part of stdin from each of two child processes.
 #[cfg(not(windows))]
 #[test]

@@ -662,6 +662,12 @@ impl Dest {
 
     #[cfg_attr(not(unix), allow(unused_variables))]
     fn seek(&mut self, n: u64, obs: usize) -> io::Result<u64> {
+        // Do not issue a seek if nothing to skip. Seeking a non-seekable
+        // output that is not a FIFO (a character device, or tracefs)
+        // fails with ESPIPE, and GNU does not seek either here.
+        if n == 0 {
+            return Ok(0);
+        }
         match self {
             Self::Stdout(stdout) => io::copy(&mut io::repeat(0).take(n), stdout),
             Self::File(f, _) => {
@@ -695,7 +701,13 @@ impl Dest {
         let Self::File(f, _) = self else {
             return Ok(());
         };
-        let pos = f.stream_position()?;
+        let pos = match f.stream_position() {
+            Ok(pos) => pos,
+            // A non-regular output has no end to truncate to, and the
+            // `set_len()` below would ignore its failure anyway.
+            Err(_) if !f.metadata().is_ok_and(|m| m.file_type().is_file()) => return Ok(()),
+            Err(e) => return Err(e),
+        };
         // `set_len()` can fail with EINVAL on special outputs such as
         // `/dev/null`; GNU ignores that. But on a regular file a
         // truncate failure (e.g. ENOSPC, read-only fs) means silent data
